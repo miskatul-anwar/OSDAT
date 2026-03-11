@@ -17,6 +17,9 @@ csv = "1"
 xml-rs = "0.8"
 uuid = { version = "1", features = ["v4"] }
 indexmap = { version = "2", features = ["serde"] }
+ratatui = { version = "0.30", features = ["all-widgets", "crossterm"] }
+crossterm = "0.28"
+color-eyre = "0.6"
 
 [dev-dependencies]
 tempfile = "3"

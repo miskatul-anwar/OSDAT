@@ -5,6 +5,7 @@ mod extractor;
 mod llm;
 mod models;
 mod output;
+mod tui;
 
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -16,6 +17,31 @@ use models::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let no_tui = args.iter().any(|a| a == "--no-tui");
+
+    if !no_tui {
+        // Run TUI mode
+        match tui::run_tui().await {
+            Ok(Some(_report)) => {
+                println!("Assessment complete!");
+            }
+            Ok(None) => {
+                println!("Assessment cancelled.");
+            }
+            Err(e) => {
+                eprintln!("TUI error: {e}");
+                eprintln!("Falling back to CLI mode...");
+                run_cli_mode().await?;
+            }
+        }
+        return Ok(());
+    }
+
+    run_cli_mode().await
+}
+
+async fn run_cli_mode() -> Result<(), Box<dyn std::error::Error>> {
     // Stage 1: CLI Input
     let config = cli::collect_app_config();
 
