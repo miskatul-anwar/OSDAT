@@ -306,6 +306,7 @@ fn extract_txt_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<Stri
 
 /// Extract metadata from a PDF file using Python camelot via subprocess.
 /// Falls back to basic metadata if Python/camelot is not available.
+/// Includes a 60-second timeout to avoid hanging on malformed PDFs.
 fn extract_pdf_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<String>, u64) {
     use std::process::Command;
 
@@ -334,44 +335,79 @@ except Exception as e:
     print(json.dumps({"error": str(e)}))
 "#;
 
-    match Command::new("python3")
+    let mut child = match Command::new("python3")
         .args(["-c", script, &file_path.display().to_string()])
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
     {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                if val.get("error").is_none() {
-                    let rows = val
-                        .get("rows")
-                        .and_then(|v| v.as_u64())
-                        .filter(|&r| r > 0);
-                    let cols = val
-                        .get("cols")
-                        .and_then(|v| v.as_u64())
-                        .filter(|&c| c > 0);
-                    let empty = val.get("empty").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let headers: Vec<String> = val
-                        .get("headers")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    return (rows, cols, headers, empty);
+        Ok(child) => child,
+        Err(_) => {
+            eprintln!("    Note: Python/camelot not available for PDF extraction");
+            return (None, None, Vec::new(), 0);
+        }
+    };
+
+    let timeout = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    let stdout = child.stdout.take().map(|mut s| {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                        buf
+                    }).unwrap_or_default();
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                        if val.get("error").is_none() {
+                            let rows = val
+                                .get("rows")
+                                .and_then(|v| v.as_u64())
+                                .filter(|&r| r > 0);
+                            let cols = val
+                                .get("cols")
+                                .and_then(|v| v.as_u64())
+                                .filter(|&c| c > 0);
+                            let empty = val.get("empty").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let headers: Vec<String> = val
+                                .get("headers")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            return (rows, cols, headers, empty);
+                        }
+                    }
+                    eprintln!(
+                        "    Warning: camelot extraction failed for {}",
+                        file_path.display()
+                    );
+                    return (None, None, Vec::new(), 0);
+                } else {
+                    eprintln!("    Note: Python/camelot not available for PDF extraction");
+                    return (None, None, Vec::new(), 0);
                 }
             }
-            eprintln!(
-                "    Warning: camelot extraction failed for {}",
-                file_path.display()
-            );
-            (None, None, Vec::new(), 0)
-        }
-        _ => {
-            eprintln!("    Note: Python/camelot not available for PDF extraction");
-            (None, None, Vec::new(), 0)
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    eprintln!(
+                        "    Warning: camelot timed out after {}s for {}",
+                        timeout.as_secs(),
+                        file_path.display()
+                    );
+                    child.kill().ok();
+                    child.wait().ok();
+                    return (None, None, Vec::new(), 0);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => {
+                return (None, None, Vec::new(), 0);
+            }
         }
     }
 }

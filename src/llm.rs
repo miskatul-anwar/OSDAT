@@ -245,7 +245,73 @@ fn read_file_content_snippet(file_path: &std::path::Path, file_type: &str) -> St
                 }
             })
             .unwrap_or_default(),
+        "PDF" => read_pdf_text(file_path, max_chars),
+        "XLSX" | "XLS" => read_xlsx_text(file_path, max_chars),
         _ => format!("[Binary {file_type} file — column names used for analysis]"),
+    }
+}
+
+/// Extract text from a PDF file using pdftotext subprocess.
+fn read_pdf_text(file_path: &std::path::Path, max_chars: usize) -> String {
+    use std::process::Command;
+
+    // Try pdftotext first (poppler-utils)
+    if let Ok(output) = Command::new("pdftotext")
+        .args([
+            file_path.display().to_string().as_str(),
+            "-",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.trim().is_empty() {
+                if text.len() > max_chars {
+                    return text[..max_chars].to_string();
+                }
+                return text;
+            }
+        }
+    }
+
+    format!("[Binary PDF file — column names used for analysis]")
+}
+
+/// Read content from an XLSX file using calamine.
+fn read_xlsx_text(file_path: &std::path::Path, max_chars: usize) -> String {
+    use calamine::{open_workbook_auto, DataType, Reader};
+
+    match open_workbook_auto(file_path) {
+        Ok(mut workbook) => {
+            let mut text = String::new();
+            if let Some(sheet_name) = workbook.sheet_names().first().cloned() {
+                if let Ok(range) = workbook.worksheet_range(&sheet_name) {
+                    for row in range.rows() {
+                        let row_text: Vec<String> = row
+                            .iter()
+                            .map(|cell| {
+                                if cell.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{cell}")
+                                }
+                            })
+                            .collect();
+                        text.push_str(&row_text.join("\t"));
+                        text.push('\n');
+                        if text.len() > max_chars {
+                            return text[..max_chars].to_string();
+                        }
+                    }
+                }
+            }
+            if text.is_empty() {
+                format!("[Binary XLSX file — column names used for analysis]")
+            } else {
+                text
+            }
+        }
+        Err(_) => format!("[Binary XLSX file — could not read content]"),
     }
 }
 

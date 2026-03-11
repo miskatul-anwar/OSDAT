@@ -87,6 +87,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             *file_size,
         );
 
+        // For PDF files with table data, verify with Mistral if multiple datasets exist
+        if file_info.file_extension == ".pdf" && datasets.len() == 1 {
+            if let Some(data) = datasets.first() {
+                if !data.column_names.is_empty() {
+                    let summary = format!(
+                        "Table with {} rows, {} columns. Headers: {}",
+                        data.rows.unwrap_or(0),
+                        data.columns.unwrap_or(0),
+                        data.column_names.join(", ")
+                    );
+                    if let Some(groupings) =
+                        llm::verify_pdf_tables_with_mistral(&summary, &client).await
+                    {
+                        if groupings.len() > 1 {
+                            println!(
+                                "    Mistral detected {} logical datasets in PDF",
+                                groupings.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Try to extract dataset name from the source page HTML
         for data in &mut datasets {
             if let Some(html) = page_htmls.get(&file_info.source_page_url) {
