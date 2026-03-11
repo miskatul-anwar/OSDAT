@@ -58,7 +58,13 @@ pub fn collect_app_config() -> AppConfig {
         page_urls.push(url);
     }
 
-    let output_filename = prompt("\nEnter output JSON filename (e.g. sparrso.json): ");
+    let output_filename = loop {
+        let name = prompt("\nEnter output JSON filename (e.g. sparrso.json): ");
+        if is_safe_filename(&name) {
+            break name;
+        }
+        println!("Invalid filename. Must not contain path separators or '..' sequences.");
+    };
     let category_name = prompt("Enter category name (e.g. গবেষণা): ");
 
     AppConfig {
@@ -67,6 +73,15 @@ pub fn collect_app_config() -> AppConfig {
         output_filename,
         category_name,
     }
+}
+
+/// Check if a filename is safe (no path traversal).
+fn is_safe_filename(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.starts_with('.')
 }
 
 /// Collect platform-level fields from the user, using LLM suggestions as defaults.

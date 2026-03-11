@@ -4,8 +4,12 @@ use tokio::io::AsyncWriteExt;
 
 use crate::models::DiscoveredFile;
 
+/// Maximum allowed file size for downloads (500 MB).
+const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024;
+
 /// Download a file from a URL and save it to the specified directory.
 /// Returns the local file path and the file size in bytes.
+/// Rejects files that exceed MAX_FILE_SIZE.
 pub async fn download_file(
     file: &DiscoveredFile,
     download_dir: &Path,
@@ -20,8 +24,23 @@ pub async fn download_file(
         return Err(format!("HTTP {} for {}", response.status(), file.download_url).into());
     }
 
+    // Check Content-Length header if available
+    if let Some(content_length) = response.content_length() {
+        if content_length > MAX_FILE_SIZE {
+            return Err(format!(
+                "File too large ({} bytes, max {})",
+                content_length, MAX_FILE_SIZE
+            )
+            .into());
+        }
+    }
+
     let bytes = response.bytes().await?;
     let size = bytes.len() as u64;
+
+    if size > MAX_FILE_SIZE {
+        return Err(format!("Downloaded file too large ({size} bytes, max {MAX_FILE_SIZE})").into());
+    }
 
     let mut out_file = fs::File::create(&file_path).await?;
     out_file.write_all(&bytes).await?;
@@ -55,6 +74,7 @@ pub async fn download_all_files(
 }
 
 /// Generate a safe local filename from a URL.
+/// Prevents path traversal by sanitizing the filename.
 fn generate_filename(url: &str, extension: &str) -> String {
     use uuid::Uuid;
 
@@ -63,13 +83,27 @@ fn generate_filename(url: &str, extension: &str) -> String {
         let path = parsed.path();
         if let Some(segment) = path.rsplit('/').next() {
             let decoded = urldecode(segment);
-            if !decoded.is_empty() && decoded.contains('.') {
-                // Sanitize: replace problematic characters
+            // Reject if it contains path traversal patterns
+            if !decoded.is_empty()
+                && decoded.contains('.')
+                && !decoded.contains("..")
+                && !decoded.contains('/')
+                && !decoded.contains('\\')
+            {
+                // Sanitize: only allow safe characters
                 let safe: String = decoded
                     .chars()
-                    .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
                     .collect();
-                return safe;
+                if !safe.is_empty() {
+                    return safe;
+                }
             }
         }
     }

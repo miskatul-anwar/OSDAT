@@ -156,6 +156,9 @@ fn extract_excel_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<St
     }
 }
 
+/// Maximum number of XML elements to process before stopping.
+const MAX_XML_ELEMENTS: u64 = 100_000;
+
 /// Extract basic metadata from an XML file.
 fn extract_xml_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<String>) {
     use std::collections::HashSet;
@@ -175,16 +178,24 @@ fn extract_xml_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<Stri
     let parser = EventReader::new(reader);
 
     let mut element_names: HashSet<String> = HashSet::new();
-    let mut _element_count: u64 = 0;
+    let mut element_count: u64 = 0;
     let mut depth: u32 = 0;
     let mut record_depth: Option<u32> = None;
     let mut record_count: u64 = 0;
 
     for event in parser {
+        element_count += 1;
+        if element_count > MAX_XML_ELEMENTS {
+            eprintln!(
+                "    Warning: XML file exceeds element limit ({}), stopping",
+                MAX_XML_ELEMENTS
+            );
+            break;
+        }
+
         match event {
             Ok(XmlEvent::StartElement { name, .. }) => {
                 depth += 1;
-                _element_count += 1;
                 element_names.insert(name.local_name.clone());
 
                 // Heuristic: elements at depth 2 are likely records
