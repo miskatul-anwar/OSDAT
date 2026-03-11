@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
+use indexmap::IndexMap;
 
 use crate::models::{DatasetRagAnalysis, LlmAnalysis};
 
@@ -119,7 +120,7 @@ fn parse_llm_response(response: &str) -> LlmAnalysis {
                 .map(|v| v as u8),
             languages: value.get("languages").and_then(|v| {
                 if let Some(obj) = v.as_object() {
-                    let mut map = HashMap::new();
+                    let mut map = IndexMap::new();
                     for (k, val) in obj {
                         if let Some(n) = val.as_u64() {
                             map.insert(k.clone(), n as u8);
@@ -206,12 +207,13 @@ Respond with ONLY a JSON object containing these fields:
   "granularity_day": 0,
   "granularity_month": 0,
   "granularity_year": 0,
-  "granularity_union": 0,
-  "granularity_upazila": 0,
-  "granularity_zila": 0
+  "granularity_union": "Name of union if data is at union level, or empty string",
+  "granularity_upazila": "Name of upazila if data is at upazila level, or empty string",
+  "granularity_zila": "Name of zila if data is at zila level, or empty string"
 }}
 
-For granularity fields, use 1 if the data has that time/geo dimension, 0 otherwise."#
+For time granularity fields, use 1 if the data has that time dimension, 0 otherwise.
+For geo granularity fields, use the name of the administrative area or empty string if not applicable."#
     );
 
     match query_ollama(&prompt, QWEN_MODEL, client).await {
@@ -287,16 +289,16 @@ fn parse_rag_response(response: &str) -> DatasetRagAnalysis {
                 .map(|v| v as u8),
             granularity_union: value
                 .get("granularity_union")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u8),
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             granularity_upazila: value
                 .get("granularity_upazila")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u8),
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             granularity_zila: value
                 .get("granularity_zila")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u8),
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         },
         Err(_) => DatasetRagAnalysis::default(),
     }
@@ -444,12 +446,13 @@ That's the result."#;
 
     #[test]
     fn test_parse_rag_response() {
-        let response = r#"{"dataset_name": "Test Dataset", "time_period": "2020-2021", "update_activity": "yearly", "last_update": "2021-12-31", "collection_method": "survey", "granularity_day": 0, "granularity_month": 1, "granularity_year": 1, "granularity_union": 0, "granularity_upazila": 0, "granularity_zila": 1}"#;
+        let response = r#"{"dataset_name": "Test Dataset", "time_period": "2020-2021", "update_activity": "yearly", "last_update": "2021-12-31", "collection_method": "survey", "granularity_day": 0, "granularity_month": 1, "granularity_year": 1, "granularity_union": "", "granularity_upazila": "", "granularity_zila": "Dhaka"}"#;
         let rag = parse_rag_response(response);
         assert_eq!(rag.dataset_name, Some("Test Dataset".to_string()));
         assert_eq!(rag.time_period, Some("2020-2021".to_string()));
         assert_eq!(rag.granularity_month, Some(1));
-        assert_eq!(rag.granularity_zila, Some(1));
+        assert_eq!(rag.granularity_zila, Some("Dhaka".to_string()));
+        assert_eq!(rag.granularity_union, Some(String::new()));
     }
 
     #[test]

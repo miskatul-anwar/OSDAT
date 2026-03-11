@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
+
+use indexmap::IndexMap;
 
 use crate::models::{
     AppConfig, DatasetLevel, DatasetRagAnalysis, FiveStar, Openness, OpennessComplete, Provenance,
@@ -216,6 +217,16 @@ pub fn collect_dataset_level_fields(
         "Is the data license-free?",
         Some(auto.openness.license_free),
     );
+    let non_discriminatory = prompt_with_default_binary(
+        "openness.non-discriminatory",
+        "Is the data available without discrimination?",
+        Some(auto.openness.non_discriminatory),
+    );
+    let accessible = prompt_with_default_binary(
+        "openness.accessible",
+        "Is the data publicly accessible?",
+        Some(auto.openness.accessible),
+    );
 
     // --- transparency ---
     let transparency_source = if !auto.transparency.source.is_empty() {
@@ -263,15 +274,7 @@ pub fn collect_dataset_level_fields(
     );
 
     // --- provenance (with RAG defaults) ---
-    let prov_source = if let Some(ref s) = rag.collection_method {
-        if !s.is_empty() {
-            s.clone()
-        } else {
-            transparency_source.clone()
-        }
-    } else {
-        transparency_source.clone()
-    };
+    let prov_source = transparency_source.clone();
 
     let time_period = prompt_with_default_string(
         "provenance.time-period",
@@ -310,8 +313,8 @@ pub fn collect_dataset_level_fields(
                 linked_data,
             },
             primary,
-            non_discriminatory: auto.openness.non_discriminatory,
-            accessible: auto.openness.accessible,
+            non_discriminatory,
+            accessible,
             timely,
             non_proprietary: auto.openness.non_proprietary,
             license_free,
@@ -432,8 +435,8 @@ fn prompt_with_default_string(field_name: &str, description: &str, default: Opti
     prompt("  Enter value: ")
 }
 
-fn collect_languages() -> HashMap<String, u8> {
-    let mut languages = HashMap::new();
+fn collect_languages() -> IndexMap<String, u8> {
+    let mut languages = IndexMap::new();
     println!("\n  Enter languages (name and 0/1, blank name to finish):");
     loop {
         let name = prompt("    Language name (e.g. bangla, english): ");
