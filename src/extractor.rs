@@ -25,6 +25,7 @@ pub fn extract_metadata(
 
     let (machine_readable, open_format) = classify_format(extension);
 
+    // Description is a placeholder; it will be enhanced by the LLM in Stage 5
     Dataset {
         title,
         source_url: source_url.to_string(),
@@ -33,7 +34,8 @@ pub fn extract_metadata(
         file_size_bytes: Some(file_size),
         metadata: DatasetMetadata {
             description: format!(
-                "Data file extracted from {}",
+                "Data file ({}) extracted from {}",
+                extension.trim_start_matches('.').to_uppercase(),
                 source_url
             ),
             rows,

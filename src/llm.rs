@@ -5,6 +5,7 @@ use crate::models::LlmAnalysis;
 
 const OLLAMA_API_URL: &str = "http://localhost:11434/api/generate";
 const MODEL_NAME: &str = "qwen3:2b";
+const MAX_HTML_LENGTH: usize = 4000;
 
 #[derive(Debug, Serialize)]
 struct OllamaRequest {
@@ -25,8 +26,8 @@ pub async fn analyze_website(
     client: &reqwest::Client,
 ) -> LlmAnalysis {
     // Truncate HTML to avoid overwhelming the model
-    let truncated = if html_content.len() > 4000 {
-        &html_content[..4000]
+    let truncated = if html_content.len() > MAX_HTML_LENGTH {
+        &html_content[..MAX_HTML_LENGTH]
     } else {
         html_content
     };
