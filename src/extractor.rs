@@ -309,12 +309,12 @@ fn extract_txt_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<Stri
 fn extract_pdf_metadata(file_path: &Path) -> (Option<u64>, Option<u64>, Vec<String>, u64) {
     use std::process::Command;
 
-    let script = format!(
-        r#"
+    let script = r#"
 import json, sys
 try:
     import camelot
-    tables = camelot.read_pdf("{path}", pages="all", flavor="stream")
+    path = sys.argv[1]
+    tables = camelot.read_pdf(path, pages="all", flavor="stream")
     total_rows = 0
     total_cols = 0
     empty_cells = 0
@@ -329,15 +329,13 @@ try:
             for val in row:
                 if str(val).strip() == "":
                     empty_cells += 1
-    print(json.dumps({{"rows": total_rows, "cols": total_cols, "empty": empty_cells, "headers": headers}}))
+    print(json.dumps({"rows": total_rows, "cols": total_cols, "empty": empty_cells, "headers": headers}))
 except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-"#,
-        path = file_path.display()
-    );
+    print(json.dumps({"error": str(e)}))
+"#;
 
     match Command::new("python3")
-        .args(["-c", &script])
+        .args(["-c", script, &file_path.display().to_string()])
         .output()
     {
         Ok(output) if output.status.success() => {
