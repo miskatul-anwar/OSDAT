@@ -1,6 +1,5 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // ──────────────────────────────────────────────
 // Top-level output structure matching sparrso.json
@@ -16,7 +15,7 @@ pub struct WebsiteReport {
     pub url: String,
     #[serde(rename = "portal-quality-assesment")]
     pub portal_quality_assessment: PortalQualityAssessment,
-    pub category: HashMap<String, IndexMap<String, DatasetEntry>>,
+    pub category: IndexMap<String, IndexMap<String, DatasetEntry>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +45,7 @@ pub struct UserAccessibility {
     pub multiple_language_support: u8,
     #[serde(rename = "request-for-datasets")]
     pub request_for_datasets: u8,
-    pub languages: HashMap<String, u8>,
+    pub languages: IndexMap<String, u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +144,7 @@ pub struct Transparency {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Understandability {
-    #[serde(rename = "FAQ")]
+    #[serde(rename = "faq")]
     pub faq: u8,
     #[serde(rename = "textual-description")]
     pub textual_description: u8,
@@ -216,9 +215,9 @@ pub struct TimeDimension {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeoDimension {
-    pub union: u8,
-    pub upazila: u8,
-    pub zila: u8,
+    pub union: String,
+    pub upazila: String,
+    pub zila: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,7 +265,7 @@ pub struct LlmAnalysis {
     pub necessity_of_login: Option<u8>,
     pub multiple_language_support: Option<u8>,
     pub request_for_datasets: Option<u8>,
-    pub languages: Option<HashMap<String, u8>>,
+    pub languages: Option<IndexMap<String, u8>>,
     pub browse_datasets_by_category: Option<u8>,
     pub filter_sort_datasets: Option<u8>,
     pub search_for_dataset: Option<u8>,
@@ -285,9 +284,9 @@ pub struct DatasetRagAnalysis {
     pub granularity_day: Option<u8>,
     pub granularity_month: Option<u8>,
     pub granularity_year: Option<u8>,
-    pub granularity_union: Option<u8>,
-    pub granularity_upazila: Option<u8>,
-    pub granularity_zila: Option<u8>,
+    pub granularity_union: Option<String>,
+    pub granularity_upazila: Option<String>,
+    pub granularity_zila: Option<String>,
 }
 
 /// Extracted file metrics from a downloaded file.
@@ -358,8 +357,8 @@ pub fn auto_detect_dataset_level(data: &ExtractedFileData) -> DatasetLevel {
                 machine_readable: mr,
                 linked_data: 0,
             },
-            primary: 0,
-            non_discriminatory: 1, // publicly available
+            primary: 1,
+            non_discriminatory: 0, // default to 0, user prompted
             accessible: 1,        // publicly reachable
             timely: 0,
             non_proprietary: is_non_proprietary(&ext),
@@ -406,9 +405,9 @@ pub fn auto_detect_data_level(data: &ExtractedFileData) -> DataLevel {
                 year: 0,
             },
             geo_dimension: GeoDimension {
-                union: 0,
-                upazila: 0,
-                zila: 0,
+                union: String::new(),
+                upazila: String::new(),
+                zila: String::new(),
             },
         },
         data_level_completeness: DataLevelCompleteness {
@@ -476,6 +475,8 @@ mod tests {
         assert_eq!(dl.openness.non_proprietary, 1);
         assert_eq!(dl.openness.machine_readable.csv, 1);
         assert_eq!(dl.openness.machine_readable.pdf, 0);
+        assert_eq!(dl.openness.primary, 1);
+        assert_eq!(dl.openness.non_discriminatory, 0);
     }
 
     #[test]

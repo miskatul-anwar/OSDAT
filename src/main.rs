@@ -5,6 +5,7 @@ mod extractor;
 mod llm;
 mod models;
 mod output;
+mod tui;
 
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -16,6 +17,31 @@ use models::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let no_tui = args.iter().any(|a| a == "--no-tui");
+
+    if !no_tui {
+        // Run TUI mode
+        match tui::run_tui().await {
+            Ok(Some(_report)) => {
+                println!("Assessment complete!");
+            }
+            Ok(None) => {
+                println!("Assessment cancelled.");
+            }
+            Err(e) => {
+                eprintln!("TUI error: {e}");
+                eprintln!("Falling back to CLI mode...");
+                run_cli_mode().await?;
+            }
+        }
+        return Ok(());
+    }
+
+    run_cli_mode().await
+}
+
+async fn run_cli_mode() -> Result<(), Box<dyn std::error::Error>> {
     // Stage 1: CLI Input
     let config = cli::collect_app_config();
 
@@ -75,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Stage 4: Data Extraction (returns Vec per file for multi-dataset support)
     println!("\n=== Stage 4: Extracting metadata from files ===");
-    let mut all_extracted = Vec::new();
+    let mut all_extracted: Vec<(models::ExtractedFileData, PathBuf)> = Vec::new();
 
     for (file_info, local_path, file_size) in &downloaded {
         println!("  Processing: {}", local_path.display());
@@ -86,6 +112,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &file_info.file_extension,
             *file_size,
         );
+
+        // For PDF files with table data, verify with Mistral if multiple datasets exist
+        if file_info.file_extension == ".pdf" && datasets.len() == 1 {
+            if let Some(data) = datasets.first() {
+                if !data.column_names.is_empty() {
+                    let summary = format!(
+                        "Table with {} rows, {} columns. Headers: {}",
+                        data.rows.unwrap_or(0),
+                        data.columns.unwrap_or(0),
+                        data.column_names.join(", ")
+                    );
+                    if let Some(groupings) =
+                        llm::verify_pdf_tables_with_mistral(&summary, &client).await
+                    {
+                        if groupings.len() > 1 {
+                            println!(
+                                "    Mistral detected {} logical datasets in PDF",
+                                groupings.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         // Try to extract dataset name from the source page HTML
         for data in &mut datasets {
@@ -98,7 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        all_extracted.extend(datasets);
+        for data in datasets {
+            all_extracted.push((data, local_path.clone()));
+        }
     }
 
     // Stage 5: RAG-Assisted Analysis for dataset metadata
@@ -109,19 +161,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|u| u.host_str().unwrap_or("Unknown").to_string())
         .unwrap_or_else(|_| "Unknown".to_string());
 
-    for (idx, data) in all_extracted.iter().enumerate() {
+    for (idx, (data, local_path)) in all_extracted.iter().enumerate() {
         println!("  Analyzing dataset {}: {}", idx + 1, data.title);
 
-        // Run RAG analysis
-        let local_path = download_dir.join(format!(
-            "{}",
-            data.download_url
-                .rsplit('/')
-                .next()
-                .unwrap_or("unknown")
-        ));
+        // Run RAG analysis using the actual downloaded file path
         let rag_analysis = llm::analyze_dataset_with_rag(
-            &local_path,
+            local_path,
             &data.file_type,
             &data.column_names,
             &client,
@@ -149,14 +194,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(v) = rag_analysis.granularity_year {
             data_level.granularity.time_dimension.year = v;
         }
-        if let Some(v) = rag_analysis.granularity_union {
-            data_level.granularity.geo_dimension.union = v;
+        if let Some(ref v) = rag_analysis.granularity_union {
+            data_level.granularity.geo_dimension.union = v.clone();
         }
-        if let Some(v) = rag_analysis.granularity_upazila {
-            data_level.granularity.geo_dimension.upazila = v;
+        if let Some(ref v) = rag_analysis.granularity_upazila {
+            data_level.granularity.geo_dimension.upazila = v.clone();
         }
-        if let Some(v) = rag_analysis.granularity_zila {
-            data_level.granularity.geo_dimension.zila = v;
+        if let Some(ref v) = rag_analysis.granularity_zila {
+            data_level.granularity.geo_dimension.zila = v.clone();
         }
 
         // Collect per-dataset fields from user (merging auto + RAG + manual)
@@ -185,7 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut final_platform_level = platform_level;
     final_platform_level.diversity.number_of_dataset = all_extracted.len() as u32;
 
-    let mut category_map = HashMap::new();
+    let mut category_map = IndexMap::new();
     category_map.insert(config.category_name.clone(), dataset_entries);
 
     let report = QualityReport {

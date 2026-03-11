@@ -24,11 +24,10 @@ mod tests {
     use super::*;
     use crate::models::*;
     use indexmap::IndexMap;
-    use std::collections::HashMap;
     use tempfile::TempDir;
 
     fn sample_report() -> QualityReport {
-        let mut languages = HashMap::new();
+        let mut languages = IndexMap::new();
         languages.insert("bangla".to_string(), 1);
         languages.insert("english".to_string(), 1);
 
@@ -95,9 +94,9 @@ mod tests {
                             year: 1,
                         },
                         geo_dimension: GeoDimension {
-                            union: 0,
-                            upazila: 0,
-                            zila: 0,
+                            union: String::new(),
+                            upazila: String::new(),
+                            zila: String::new(),
                         },
                     },
                     data_level_completeness: DataLevelCompleteness {
@@ -113,7 +112,7 @@ mod tests {
             },
         );
 
-        let mut category = HashMap::new();
+        let mut category = IndexMap::new();
         category.insert("গবেষণা".to_string(), datasets);
 
         QualityReport {
