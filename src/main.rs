@@ -6,9 +6,13 @@ mod llm;
 mod models;
 mod output;
 
+use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use models::{Category, QualityReport, Website};
+use models::{
+    DatasetEntry, PortalQualityAssessment, QualityReport, WebsiteReport,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,6 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Stage 2: Crawling pages for data files ===");
     let crawl_results = crawler::crawl_pages(&config.page_urls, &client).await?;
 
+    // Store page HTML for dataset name extraction
+    let mut page_htmls: HashMap<String, String> = HashMap::new();
+    for page_url in &config.page_urls {
+        if let Ok(html) = crawler::fetch_page_html(page_url, &client).await {
+            page_htmls.insert(page_url.clone(), html);
+        }
+    }
+
     // Flatten all discovered files
     let all_files: Vec<models::DiscoveredFile> = crawl_results
         .values()
@@ -61,52 +73,129 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_files.len()
     );
 
-    // Stage 4: Data Extraction
+    // Stage 4: Data Extraction (returns Vec per file for multi-dataset support)
     println!("\n=== Stage 4: Extracting metadata from files ===");
-    let mut datasets = Vec::new();
+    let mut all_extracted = Vec::new();
 
     for (file_info, local_path, file_size) in &downloaded {
         println!("  Processing: {}", local_path.display());
-        let dataset = extractor::extract_metadata(
+        let mut datasets = extractor::extract_metadata(
             local_path,
             &file_info.download_url,
             &file_info.source_page_url,
             &file_info.file_extension,
             *file_size,
         );
-        datasets.push(dataset);
+
+        // Try to extract dataset name from the source page HTML
+        for data in &mut datasets {
+            if let Some(html) = page_htmls.get(&file_info.source_page_url) {
+                if let Some(name) =
+                    llm::extract_dataset_name_from_html(html, &file_info.download_url)
+                {
+                    data.title = name;
+                }
+            }
+        }
+
+        all_extracted.extend(datasets);
     }
 
-    // Stage 5: LLM-Assisted Analysis for dataset descriptions
-    println!("\n=== Stage 5: Enhancing dataset descriptions with AI ===");
-    for dataset in &mut datasets {
-        if let Some(description) = llm::analyze_dataset_file(
-            &dataset.download_url,
-            &dataset.file_type,
-            &dataset.metadata.column_names,
+    // Stage 5: RAG-Assisted Analysis for dataset metadata
+    println!("\n=== Stage 5: Enhancing dataset metadata with AI (RAG) ===");
+    let mut dataset_entries = IndexMap::new();
+
+    let site_name = url::Url::parse(&config.root_url)
+        .map(|u| u.host_str().unwrap_or("Unknown").to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    for (idx, data) in all_extracted.iter().enumerate() {
+        println!("  Analyzing dataset {}: {}", idx + 1, data.title);
+
+        // Run RAG analysis
+        let local_path = download_dir.join(format!(
+            "{}",
+            data.download_url
+                .rsplit('/')
+                .next()
+                .unwrap_or("unknown")
+        ));
+        let rag_analysis = llm::analyze_dataset_with_rag(
+            &local_path,
+            &data.file_type,
+            &data.column_names,
             &client,
         )
-        .await
-        {
-            dataset.metadata.description = description;
+        .await;
+
+        // Use RAG-detected dataset name if available, otherwise keep existing
+        let dataset_name = rag_analysis
+            .dataset_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| data.title.clone());
+
+        // Auto-detect dataset-level and data-level fields
+        let auto_dataset_level = models::auto_detect_dataset_level(data);
+        let mut data_level = models::auto_detect_data_level(data);
+
+        // Apply RAG granularity results
+        if let Some(v) = rag_analysis.granularity_day {
+            data_level.granularity.time_dimension.day = v;
         }
+        if let Some(v) = rag_analysis.granularity_month {
+            data_level.granularity.time_dimension.month = v;
+        }
+        if let Some(v) = rag_analysis.granularity_year {
+            data_level.granularity.time_dimension.year = v;
+        }
+        if let Some(v) = rag_analysis.granularity_union {
+            data_level.granularity.geo_dimension.union = v;
+        }
+        if let Some(v) = rag_analysis.granularity_upazila {
+            data_level.granularity.geo_dimension.upazila = v;
+        }
+        if let Some(v) = rag_analysis.granularity_zila {
+            data_level.granularity.geo_dimension.zila = v;
+        }
+
+        // Collect per-dataset fields from user (merging auto + RAG + manual)
+        let dataset_level = cli::collect_dataset_level_fields(
+            &dataset_name,
+            &auto_dataset_level,
+            &rag_analysis,
+            &site_name,
+        );
+
+        let key = format!("dataset{}", idx + 1);
+        dataset_entries.insert(
+            key,
+            DatasetEntry {
+                dataset_name,
+                url: data.source_url.clone(),
+                dataset_level,
+                data_level,
+            },
+        );
     }
 
     // Stage 6: JSON Generation
     println!("\n=== Stage 6: Generating quality assessment report ===");
 
     let mut final_platform_level = platform_level;
-    final_platform_level.diversity.number_of_dataset = datasets.len() as u32;
+    final_platform_level.diversity.number_of_dataset = all_extracted.len() as u32;
+
+    let mut category_map = HashMap::new();
+    category_map.insert(config.category_name.clone(), dataset_entries);
 
     let report = QualityReport {
-        website: Website {
+        website: WebsiteReport {
             url: config.root_url.clone(),
+            portal_quality_assessment: PortalQualityAssessment {
+                platform_level: final_platform_level,
+            },
+            category: category_map,
         },
-        platform_level: final_platform_level,
-        categories: vec![Category {
-            name: config.category_name.clone(),
-            datasets,
-        }],
     };
 
     let output_path = PathBuf::from(&config.output_filename);

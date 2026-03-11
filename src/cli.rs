@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
-use crate::models::AppConfig;
+use crate::models::{
+    AppConfig, DatasetLevel, DatasetRagAnalysis, FiveStar, Openness, OpennessComplete, Provenance,
+    SemanticConsistency, Transparency, Understandability,
+};
 
 /// Read a single line of user input with a prompt message.
 pub fn prompt(message: &str) -> String {
@@ -171,6 +174,179 @@ pub fn collect_platform_level_with_defaults(
     }
 }
 
+/// Collect per-dataset fields that cannot be auto-detected.
+/// Merges auto-detected values with RAG analysis and user input.
+pub fn collect_dataset_level_fields(
+    dataset_name: &str,
+    auto: &DatasetLevel,
+    rag: &DatasetRagAnalysis,
+    site_name: &str,
+) -> DatasetLevel {
+    println!(
+        "\n  === Dataset-Level Fields for: {} ===",
+        dataset_name
+    );
+    println!("  (Press Enter to accept auto-detected/AI values)\n");
+
+    // --- openness.complete ---
+    let descriptive = prompt_with_default_binary(
+        "openness.complete.descriptive",
+        "Is the dataset descriptive?",
+        Some(auto.openness.complete.descriptive),
+    );
+    let linked_data = prompt_with_default_binary(
+        "openness.complete.linked-data",
+        "Is the dataset available as linked data?",
+        Some(auto.openness.complete.linked_data),
+    );
+
+    // --- openness top-level ---
+    let primary = prompt_with_default_binary(
+        "openness.primary",
+        "Is this primary/original data?",
+        Some(auto.openness.primary),
+    );
+    let timely = prompt_with_default_binary(
+        "openness.timely",
+        "Is the data published in a timely manner?",
+        Some(auto.openness.timely),
+    );
+    let license_free = prompt_with_default_binary(
+        "openness.license-free",
+        "Is the data license-free?",
+        Some(auto.openness.license_free),
+    );
+
+    // --- transparency ---
+    let transparency_source = if !auto.transparency.source.is_empty() {
+        auto.transparency.source.clone()
+    } else {
+        site_name.to_string()
+    };
+
+    let number_of_downloads = prompt_with_default_u64(
+        "transparency.number-of-downloads",
+        "Number of downloads (if known)",
+        Some(auto.transparency.number_of_downloads),
+    );
+    let faq = prompt_with_default_binary(
+        "transparency.understandability.FAQ",
+        "Is there a FAQ for this dataset?",
+        Some(auto.transparency.understandability.faq),
+    );
+    let textual_description = prompt_with_default_binary(
+        "transparency.understandability.textual-description",
+        "Is there a textual description?",
+        Some(auto.transparency.understandability.textual_description),
+    );
+    let category_tag = prompt_with_default_binary(
+        "transparency.understandability.category-tag",
+        "Is there a category tag?",
+        Some(auto.transparency.understandability.category_tag),
+    );
+    let meta_data = prompt_with_default_binary(
+        "transparency.meta-data",
+        "Is metadata provided?",
+        Some(auto.transparency.meta_data),
+    );
+
+    // --- 5* ---
+    let open_standard = prompt_with_default_binary(
+        "transparency.5*.open-standard",
+        "Is the data in an open standard format (URIs)?",
+        Some(auto.transparency.five_star.open_standard),
+    );
+    let five_star_linked = prompt_with_default_binary(
+        "transparency.5*.linked-data",
+        "Is the data linked to other data (5* linked data)?",
+        Some(auto.transparency.five_star.linked_data),
+    );
+
+    // --- provenance (with RAG defaults) ---
+    let prov_source = if let Some(ref s) = rag.collection_method {
+        if !s.is_empty() {
+            s.clone()
+        } else {
+            transparency_source.clone()
+        }
+    } else {
+        transparency_source.clone()
+    };
+
+    let time_period = prompt_with_default_string(
+        "provenance.time-period",
+        "Time period covered by this dataset",
+        rag.time_period.as_deref(),
+    );
+    let update_activity = prompt_with_default_string(
+        "provenance.update-activity",
+        "Update activity (e.g., yearly, monthly, one-time)",
+        rag.update_activity.as_deref(),
+    );
+    let last_update = prompt_with_default_string(
+        "provenance.last-update",
+        "Last update date",
+        rag.last_update.as_deref(),
+    );
+    let collection_method = prompt_with_default_string(
+        "provenance.collection-method",
+        "Data collection method",
+        rag.collection_method.as_deref(),
+    );
+
+    // --- semantic consistency ---
+    let external_vocabulary = prompt_with_default_binary(
+        "semantic-consistency.external-vocabulary",
+        "Does the dataset use an external vocabulary/ontology?",
+        Some(auto.semantic_consistency.external_vocabulary),
+    );
+
+    DatasetLevel {
+        openness: Openness {
+            complete: OpennessComplete {
+                descriptive,
+                downloadable: auto.openness.complete.downloadable,
+                machine_readable: auto.openness.complete.machine_readable,
+                linked_data,
+            },
+            primary,
+            non_discriminatory: auto.openness.non_discriminatory,
+            accessible: auto.openness.accessible,
+            timely,
+            non_proprietary: auto.openness.non_proprietary,
+            license_free,
+            machine_readable: auto.openness.machine_readable.clone(),
+        },
+        transparency: Transparency {
+            source: transparency_source,
+            number_of_downloads,
+            understandability: Understandability {
+                faq,
+                textual_description,
+                category_tag,
+            },
+            meta_data,
+            five_star: FiveStar {
+                available_online: auto.transparency.five_star.available_online,
+                machine_readable: auto.transparency.five_star.machine_readable,
+                non_proprietary_format: auto.transparency.five_star.non_proprietary_format,
+                open_standard,
+                linked_data: five_star_linked,
+            },
+        },
+        provenance: Provenance {
+            source: prov_source,
+            time_period,
+            update_activity,
+            last_update,
+            collection_method,
+        },
+        semantic_consistency: SemanticConsistency {
+            external_vocabulary,
+        },
+    }
+}
+
 fn prompt_with_default_binary(field_name: &str, description: &str, default: Option<u8>) -> u8 {
     println!("\n  Field: {field_name}");
     println!("  Description: {description}");
@@ -210,6 +386,50 @@ fn prompt_with_default_u32(field_name: &str, description: &str, default: Option<
     } else {
         prompt_u32(field_name, description)
     }
+}
+
+fn prompt_with_default_u64(field_name: &str, description: &str, default: Option<u64>) -> u64 {
+    println!("\n  Field: {field_name}");
+    println!("  Description: {description}");
+    if let Some(d) = default {
+        println!("  Current value: {d}");
+        loop {
+            let input = prompt("  Enter a number (or press Enter to accept): ");
+            if input.is_empty() {
+                return d;
+            }
+            match input.parse::<u64>() {
+                Ok(n) => return n,
+                Err(_) => println!("  Invalid input. Please enter a valid number."),
+            }
+        }
+    } else {
+        println!("\n  Field: {field_name}");
+        println!("  Description: {description}");
+        loop {
+            let input = prompt("  Enter a number: ");
+            match input.parse::<u64>() {
+                Ok(n) => return n,
+                Err(_) => println!("  Invalid input. Please enter a valid number."),
+            }
+        }
+    }
+}
+
+fn prompt_with_default_string(field_name: &str, description: &str, default: Option<&str>) -> String {
+    println!("\n  Field: {field_name}");
+    println!("  Description: {description}");
+    if let Some(d) = default {
+        if !d.is_empty() {
+            println!("  AI suggestion: {d}");
+            let input = prompt("  Enter value (or press Enter to accept suggestion): ");
+            if input.is_empty() {
+                return d.to_string();
+            }
+            return input;
+        }
+    }
+    prompt("  Enter value: ")
 }
 
 fn collect_languages() -> HashMap<String, u8> {
