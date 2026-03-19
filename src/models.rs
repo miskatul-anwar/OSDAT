@@ -378,7 +378,7 @@ pub fn auto_detect_dataset_level(data: &ExtractedFileData) -> DatasetLevel {
                 available_online: 1, // it's on the web
                 machine_readable: mr,
                 non_proprietary_format: is_non_proprietary(&ext),
-                open_standard: 0,
+                open_standard: data.open_format,
                 linked_data: 0,
             },
         },

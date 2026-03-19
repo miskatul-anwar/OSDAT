@@ -8,7 +8,7 @@ pub fn write_report(
     report: &QualityReport,
     output_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let json = serde_json::to_string_pretty(report)?;
+    let json = report_to_json(report)?;
     fs::write(output_path, &json)?;
     println!("\nReport written to: {}", output_path.display());
     Ok(())
